@@ -1,0 +1,22 @@
+# psql artifacts
+*.log
+*.out
+
+# Editor and OS artifacts
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Credentials and environment-specific files - never commit these
+*.pem
+*.key
+*.pfx
+.pgpass
+pg_hba.conf
+postgresql.conf
+postgresql.auto.conf
+
+# Run output from bash/run_sql_check.sh
+logs/
