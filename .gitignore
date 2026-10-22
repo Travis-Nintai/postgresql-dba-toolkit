@@ -20,3 +20,7 @@ postgresql.auto.conf
 
 # Run output from bash/run_sql_check.sh
 logs/
+
+# Backup output from bash/backup_database.sh
+backups/
+*.dump
