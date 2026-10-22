@@ -16,8 +16,8 @@ PostgreSQL instance during development, not just reviewed.
 ```
 postgresql-dba-toolkit/
 ├── sql/    -- psql diagnostic scripts (health check, blocking sessions)
-├── bash/   -- runner that executes a SQL script with logging and exit codes
-├── docs/   -- script conventions and the blocking-session runbook
+├── bash/   -- runner and backup scripts with logging and exit codes
+├── docs/   -- script conventions, runbooks, and the backup and recovery lab
 └── logs/   -- timestamped output from each run (gitignored)
 ```
 
@@ -28,6 +28,7 @@ postgresql-dba-toolkit/
 | `sql/db_health_check.sql` | Instance overview: version and uptime, connection utilization vs `max_connections`, database sizes, long-running transactions, replication state, autovacuum activity |
 | `sql/blocking_sessions.sql` | Current blocking chains: blocked and blocking sessions, wait events, lock detail |
 | `bash/run_sql_check.sh` | Runs any SQL script with a connectivity probe, timestamped logging, and stable exit codes |
+| `bash/backup_database.sh` | Verified logical backup of one database: `pg_dump` with connectivity probe, then reads the archive back with `pg_restore --list` before calling it done |
 
 Health check with defaults:
 
@@ -50,6 +51,18 @@ bash/run_sql_check.sh -f sql/blocking_sessions.sql -h db.example.local -U dba -d
 When a blocking chain shows up, work it with `docs/blocking-session-runbook.md`
 before terminating anything.
 
+Backup of one database, with the archive read back and verified before the
+script reports success:
+
+```
+bash/backup_database.sh -d appdb -o ./backups
+```
+
+`docs/backup-recovery-lab.md` walks through the full backup picture:
+logical backups and selective restore, `pg_basebackup`, WAL archiving, and
+the point-in-time recovery sequence, with a restore-and-compare
+verification at the end of each part.
+
 ## Assumptions
 
 - PostgreSQL 10 or later. `pg_blocking_pids()` and the statistics views used
@@ -71,10 +84,19 @@ session waited on it) to verify `blocking_sessions.sql` reports the chain
 correctly. The bash runner was tested for its success path, a bad hostname
 (exit 2), and a failing SQL script (exit 3).
 
+The backup workflow was tested end to end on the same PostgreSQL 16
+instance: a 10,000 row test table was dumped with `backup_database.sh`
+(exit 0, archive listing verified), restored into a second database, and
+confirmed identical by row count and value aggregates. A `pg_basebackup`
+base backup with WAL streaming also completed. The point-in-time recovery
+replay is documented as a walkthrough in the lab and was not executed end
+to end; the lab document says so plainly.
+
 ## Safety notes
 
-- Everything here is read-only. The scripts query statistics and catalog views;
-  they change nothing.
+- Everything in `sql/` is read-only. The scripts query statistics and
+  catalog views; they change nothing. The backup script writes backup
+  files to a directory you choose, and nothing else.
 - Terminating sessions is a deliberate manual action covered by the runbook,
   never something these scripts do on their own.
 - Never commit credentials, hostnames, or environment-specific details
