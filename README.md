@@ -15,9 +15,9 @@ PostgreSQL instance during development, not just reviewed.
 
 ```
 postgresql-dba-toolkit/
-├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status)
+├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status, vacuum and bloat)
 ├── bash/   -- runner and backup scripts with logging and exit codes
-├── docs/   -- script conventions, runbooks, the backup and recovery lab, and replication setup
+├── docs/   -- script conventions, runbooks, the backup and recovery lab, replication setup, and the vacuum and bloat guide
 └── logs/   -- timestamped output from each run (gitignored)
 ```
 
@@ -30,6 +30,7 @@ postgresql-dba-toolkit/
 | `bash/run_sql_check.sh` | Runs any SQL script with a connectivity probe, timestamped logging, and stable exit codes |
 | `bash/backup_database.sh` | Verified logical backup of one database: `pg_dump` with connectivity probe, then reads the archive back with `pg_restore --list` before calling it done |
 | `sql/replication_status.sql` | Streaming replication health: connected standbys with send, write, flush, and replay lag on a primary; WAL receiver state on a replica; replication slots and retained WAL, with a configurable lag threshold |
+| `sql/vacuum_bloat_check.sql` | Vacuum health and bloat review: autovacuum settings, vacuums running now, tables by dead tuple load with a configurable flag threshold, never-vacuumed tables, transaction ID wraparound risk, transactions holding back the vacuum horizon, and large unused indexes |
 
 Health check with defaults:
 
@@ -75,6 +76,18 @@ psql -h db.example.local -U dba -d postgres -v max_replay_lag_mb=16 -f sql/repli
 tradeoffs, promotion steps, and troubleshooting for lag and disconnected
 standbys.
 
+Vacuum and bloat review, flagging tables over 20 percent dead tuples
+with at least 1,000 dead rows:
+
+```
+psql -h db.example.local -U dba -d appdb -f sql/vacuum_bloat_check.sql
+```
+
+`docs/vacuum-bloat-guide.md` explains why dead tuples accumulate, how
+to read each section of the output, when a plain VACUUM is enough, and
+when shrinking a table or rebuilding an index is a planned maintenance
+action instead.
+
 ## Assumptions
 
 - PostgreSQL 10 or later. `pg_blocking_pids()` and the statistics views used
@@ -111,6 +124,15 @@ on both sides with a 200 row table matching exactly, and a paused-replay
 test pushed replay lag to 31 kB and tripped the WARNING flag at a zero
 threshold before both sides matched again at 400 rows after replay
 resumed.
+
+The vacuum and bloat check was tested on the same PostgreSQL 16
+instance with a lab table carrying 2,000 dead tuples against 3,000
+live rows (40 percent dead): it flagged the table VACUUM RECOMMENDED
+at the default thresholds, reported OK with a 90 percent threshold
+override, listed the never-scanned index with a zero size threshold
+override, showed a held transaction in the vacuum horizon section,
+and reported zero dead tuples and a smaller table (472 kB to 384 kB)
+after a manual VACUUM.
 
 ## Safety notes
 
