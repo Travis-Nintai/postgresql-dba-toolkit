@@ -15,9 +15,9 @@ PostgreSQL instance during development, not just reviewed.
 
 ```
 postgresql-dba-toolkit/
-├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status, vacuum and bloat)
+├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status, vacuum and bloat) and the query tuning lab setup
 ├── bash/   -- runner and backup scripts with logging and exit codes
-├── docs/   -- script conventions, runbooks, the backup and recovery lab, replication setup, and the vacuum and bloat guide
+├── docs/   -- script conventions, runbooks, the backup and recovery lab, replication setup, the vacuum and bloat guide, and the EXPLAIN ANALYZE tuning guide
 └── logs/   -- timestamped output from each run (gitignored)
 ```
 
@@ -31,6 +31,7 @@ postgresql-dba-toolkit/
 | `bash/backup_database.sh` | Verified logical backup of one database: `pg_dump` with connectivity probe, then reads the archive back with `pg_restore --list` before calling it done |
 | `sql/replication_status.sql` | Streaming replication health: connected standbys with send, write, flush, and replay lag on a primary; WAL receiver state on a replica; replication slots and retained WAL, with a configurable lag threshold |
 | `sql/vacuum_bloat_check.sql` | Vacuum health and bloat review: autovacuum settings, vacuums running now, tables by dead tuple load with a configurable flag threshold, never-vacuumed tables, transaction ID wraparound risk, transactions holding back the vacuum horizon, and large unused indexes |
+| `sql/query_tuning_lab_setup.sql` | Builds the lab data for the query tuning guide: two fictional tables with only primary keys indexed, so the guide's queries run slowly first and fast after the indexes it adds |
 
 Health check with defaults:
 
@@ -88,6 +89,19 @@ to read each section of the output, when a plain VACUUM is enough, and
 when shrinking a table or rebuilding an index is a planned maintenance
 action instead.
 
+Build the query tuning lab data (100,000 orders, 300,000 line items,
+fictional and reproducible):
+
+```
+psql -h db.example.local -U dba -d labdb -f sql/query_tuning_lab_setup.sql
+```
+
+`docs/explain-analyze-tuning.md` walks through two slow queries with
+their real before and after plans: a recent-orders query fixed by one
+composite index, and a customer line-item join fixed by indexing the
+foreign key, plus the trap of a function on an indexed column that
+makes the planner ignore the index.
+
 ## Assumptions
 
 - PostgreSQL 10 or later. `pg_blocking_pids()` and the statistics views used
@@ -134,11 +148,25 @@ override, showed a held transaction in the vacuum horizon section,
 and reported zero dead tuples and a smaller table (472 kB to 384 kB)
 after a manual VACUUM.
 
+The query tuning lab was tested on the same PostgreSQL 16 instance
+with 100,000 orders and 300,000 line items: the recent shipped orders
+query fell from 8.6 ms to 0.11 ms after one composite index (878
+buffer hits to 23, sequential scan and sort replaced by an index
+scan), and the customer line-item join fell from 42.6 ms to 6.8 ms
+after indexing the foreign key, with a follow-up customer index
+taking it to 0.27 ms. A query filtering on `lower(status)` ignored
+the index and ran a sequential scan at 12.4 ms, which the guide
+documents as a trap rather than a tuning win. Each query was run
+twice with matching results.
+
 ## Safety notes
 
-- Everything in `sql/` is read-only. The scripts query statistics and
-  catalog views; they change nothing. The backup script writes backup
-  files to a directory you choose, and nothing else.
+- Everything in `sql/` is read-only except `query_tuning_lab_setup.sql`,
+  which builds lab tables and loads fictional data into the database
+  you point it at, and drops those tables first if they exist. The
+  diagnostic scripts query statistics and catalog views; they change
+  nothing. The backup script writes backup files to a directory you
+  choose, and nothing else.
 - Terminating sessions is a deliberate manual action covered by the runbook,
   never something these scripts do on their own.
 - Never commit credentials, hostnames, or environment-specific details
@@ -149,7 +177,8 @@ after a manual VACUUM.
 PostgreSQL-native operational diagnostics: `pg_stat_activity` and `pg_locks`
 for session and lock analysis, `pg_stat_replication` and
 `pg_stat_wal_receiver` for standby lag on both sides of a pair, replication
-slot and retained WAL awareness, autovacuum awareness, and the judgment to
+slot and retained WAL awareness, autovacuum awareness, `EXPLAIN ANALYZE`
+plan reading with before and after evidence for index tuning, and the judgment to
 cancel before terminating. The same disciplines as the Oracle toolkit,
 implemented the PostgreSQL way.
 
