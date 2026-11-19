@@ -15,9 +15,9 @@ PostgreSQL instance during development, not just reviewed.
 
 ```
 postgresql-dba-toolkit/
-├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status, vacuum and bloat) and the query tuning lab setup
+├── sql/    -- psql diagnostic scripts (health check, blocking sessions, replication status, vacuum and bloat, connection and logging) and the query tuning lab setup
 ├── bash/   -- runner and backup scripts with logging and exit codes
-├── docs/   -- script conventions, runbooks, the backup and recovery lab, replication setup, the vacuum and bloat guide, and the EXPLAIN ANALYZE tuning guide
+├── docs/   -- script conventions, runbooks, the backup and recovery lab, replication setup, the vacuum and bloat guide, the connection and logging guide, and the EXPLAIN ANALYZE tuning guide
 └── logs/   -- timestamped output from each run (gitignored)
 ```
 
@@ -31,6 +31,7 @@ postgresql-dba-toolkit/
 | `bash/backup_database.sh` | Verified logical backup of one database: `pg_dump` with connectivity probe, then reads the archive back with `pg_restore --list` before calling it done |
 | `sql/replication_status.sql` | Streaming replication health: connected standbys with send, write, flush, and replay lag on a primary; WAL receiver state on a replica; replication slots and retained WAL, with a configurable lag threshold |
 | `sql/vacuum_bloat_check.sql` | Vacuum health and bloat review: autovacuum settings, vacuums running now, tables by dead tuple load with a configurable flag threshold, never-vacuumed tables, transaction ID wraparound risk, transactions holding back the vacuum horizon, and large unused indexes |
+| `sql/connection_and_logging_check.sql` | Connection management and logging review: utilization against `max_connections`, connections by database, user, application, state, and backend type, idle-in-transaction and long idle sessions, long-running active queries, per-database connection limits, and the connection and logging settings in effect |
 | `sql/query_tuning_lab_setup.sql` | Builds the lab data for the query tuning guide: two fictional tables with only primary keys indexed, so the guide's queries run slowly first and fast after the indexes it adds |
 
 Health check with defaults:
@@ -88,6 +89,18 @@ psql -h db.example.local -U dba -d appdb -f sql/vacuum_bloat_check.sql
 to read each section of the output, when a plain VACUUM is enough, and
 when shrinking a table or rebuilding an index is a planned maintenance
 action instead.
+
+Connection and logging review, flagging idle-in-transaction sessions
+older than 10 minutes and idle sessions older than 60 minutes:
+
+```
+psql -h db.example.local -U dba -d appdb -f sql/connection_and_logging_check.sql
+```
+
+`docs/connection-and-logging.md` explains how to read each section,
+what the connection and logging settings mean, when a pooler is the
+answer instead of a larger `max_connections`, and what to check when a
+logging change seems to have no effect.
 
 Build the query tuning lab data (100,000 orders, 300,000 line items,
 fictional and reproducible):
@@ -148,6 +161,18 @@ override, showed a held transaction in the vacuum horizon section,
 and reported zero dead tuples and a smaller table (472 kB to 384 kB)
 after a manual VACUUM.
 
+The connection and logging check was tested on the same PostgreSQL 16
+instance with manufactured sessions: one idle, one idle in transaction,
+and one active session running `pg_sleep(240)`. With all thresholds set
+to zero it reported 9 backends against `max_connections` 100 (9.0
+percent, WARNING at a zero threshold), flagged the idle-in-transaction
+session WARNING and the idle session as idle over threshold, and listed
+the sleeping session with wait event type Timeout and wait event
+PgSleep. The same sessions at the default thresholds, 37 seconds old,
+reported OK. The logging section was verified to reflect a real change:
+after `ALTER DATABASE labdb SET log_min_duration_statement = 500` it
+showed 500 for that database while the others kept the -1 default.
+
 The query tuning lab was tested on the same PostgreSQL 16 instance
 with 100,000 orders and 300,000 line items: the recent shipped orders
 query fell from 8.6 ms to 0.11 ms after one composite index (878
@@ -177,7 +202,9 @@ twice with matching results.
 PostgreSQL-native operational diagnostics: `pg_stat_activity` and `pg_locks`
 for session and lock analysis, `pg_stat_replication` and
 `pg_stat_wal_receiver` for standby lag on both sides of a pair, replication
-slot and retained WAL awareness, autovacuum awareness, `EXPLAIN ANALYZE`
+slot and retained WAL awareness, autovacuum awareness, connection
+utilization and idle-in-transaction diagnosis with the logging settings
+that explain them, `EXPLAIN ANALYZE`
 plan reading with before and after evidence for index tuning, and the judgment to
 cancel before terminating. The same disciplines as the Oracle toolkit,
 implemented the PostgreSQL way.
